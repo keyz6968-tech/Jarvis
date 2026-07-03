@@ -1,0 +1,224 @@
+<script>
+(function () {
+  var JARVIS_SYSTEM_PROMPT = "You are J.A.R.V.I.S., a highly advanced AI assistant, in the personality of the AI from Iron Man. Core traits:\n" +
+    "- Impeccably polite, articulate, and composed — a brilliant British butler crossed with a systems engineer.\n" +
+    "- Dry, understated wit. Comfortable with gentle sarcasm, never unkind.\n" +
+    "- Address the user as \"sir\" by default.\n" +
+    "- Keep responses conversational and reasonably concise so they sound natural when spoken aloud.";
+
+  var history = [];
+  var thinking = false;
+
+  var chat = document.getElementById('chat');
+  var input = document.getElementById('input');
+  var sendBtn = document.getElementById('sendBtn');
+  var coreWrap = document.getElementById('coreWrap');
+  var subtitle = document.getElementById('subtitle');
+
+  // --- VOICE SYNTHESIS (J.A.R.V.I.S. Speaking) ---
+  function speak(text) {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel(); // Stop any ongoing speech
+      var utterance = new SpeechSynthesisUtterance(text);
+      
+      // Try to find a British English voice
+      var voices = window.speechSynthesis.getVoices();
+      var ukVoice = voices.find(v => v.lang.includes('en-GB') || v.name.includes('Google UK English'));
+      if (ukVoice) utterance.voice = ukVoice;
+      
+      utterance.rate = 1.0; // Steady pacing
+      utterance.pitch = 0.9; // Slightly deeper, refined tone
+      window.speechSynthesis.speak(utterance);
+    }
+  }
+
+  // --- VOICE RECOGNITION (Listening to You) ---
+  var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognizer = null;
+  
+  if (Recognition) {
+    recognizer = new Recognition();
+    recognizer.continuous = false;
+    recognizer.interimResults = false;
+    recognizer.lang = 'en-US';
+
+    recognizer.onstart = function() {
+      subtitle.textContent = "LISTENING...";
+    };
+
+    recognizer.onresult = function(event) {
+      var resultText = event.results[0][0].transcript;
+      input.value = resultText;
+      sendMessage();
+    };
+
+    recognizer.onerror = function() {
+      subtitle.textContent = "SYSTEMS NOMINAL";
+    };
+
+    recognizer.onend = function() {
+      if (!thinking) subtitle.textContent = "SYSTEMS NOMINAL";
+    };
+  }
+
+  function timeGreeting() {
+    var h = new Date().getHours();
+    if (h < 5) return "You're up rather late, sir.";
+    if (h < 12) return 'Good morning, sir.';
+    if (h < 17) return 'Good afternoon, sir.';
+    if (h < 21) return 'Good evening, sir.';
+    return 'Burning the midnight oil, I see, sir.';
+  }
+
+  function addMessage(role, text) {
+    var wrap = document.createElement('div');
+    wrap.className = 'msg ' + role;
+    var label = document.createElement('div');
+    label.className = 'msg-label';
+    label.textContent = role === 'jarvis' ? 'J.A.R.V.I.S.' : 'YOU';
+    var body = document.createElement('div');
+    body.className = 'msg-body';
+    body.textContent = text;
+    wrap.appendChild(label);
+    wrap.appendChild(body);
+    chat.appendChild(wrap);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function showTyping() {
+    var el = document.createElement('div');
+    el.className = 'typing';
+    el.id = 'typingIndicator';
+    el.innerHTML = '<span></span><span></span><span></span>';
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function hideTyping() {
+    var el = document.getElementById('typingIndicator');
+    if (el) el.remove();
+  }
+
+  function setThinking(state) {
+    thinking = state;
+    coreWrap.classList.toggle('thinking', state);
+    subtitle.textContent = state ? 'PROCESSING...' : 'SYSTEMS NOMINAL';
+    sendBtn.disabled = state;
+    input.disabled = state;
+  }
+
+  // --- LOCAL COMMAND HANDLER (Simulating App Launching) ---
+  function handleLocalCommands(text) {
+    var query = text.toLowerCase();
+    if (query.includes('open google')) {
+      window.open('https://www.google.com', '_blank');
+      return "Right away, sir. Opening Google.";
+    }
+    if (query.includes('open youtube')) {
+      window.open('https://www.youtube.com', '_blank');
+      return "Very good, sir. Launching YouTube.";
+    }
+    return null;
+  }
+
+  function sendMessage() {
+    var text = input.value.trim();
+    if (!text || thinking) return;
+
+    addMessage('user', text);
+    history.push({ role: 'user', content: text });
+    input.value = '';
+    setThinking(true);
+    showTyping();
+
+    // Check for local app commands first
+    var localResponse = handleLocalCommands(text);
+    if (localResponse) {
+      setTimeout(function() {
+        hideTyping();
+        addMessage('jarvis', localResponse);
+        speak(localResponse);
+        setThinking(false);
+      }, 800);
+      return;
+    }
+
+    // Otherwise, hit the API
+    fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        system: JARVIS_SYSTEM_PROMPT,
+        messages: history
+      })
+    })
+      .then(function (response) {
+        return response.json().then(function (data) {
+          if (!response.ok || data.error) throw new Error('Request failed');
+          return data;
+        });
+      })
+      .then(function (data) {
+        var replyText = (data.content || [])
+          .map(function (item) { return item.type === 'text' ? item.text : ''; })
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+
+        hideTyping();
+        var finalText = replyText || 'I find I have nothing further to add, sir.';
+        addMessage('jarvis', finalText);
+        speak(finalText); // Make J.A.R.V.I.S. say it out loud!
+        history.push({ role: 'assistant', content: finalText });
+      })
+      .catch(function (err) {
+        hideTyping();
+        var errorMsg = 'My apologies, sir — I appear to be experiencing some interference.';
+        addMessage('jarvis', errorMsg);
+        speak(errorMsg);
+      })
+      .finally(function () {
+        setThinking(false);
+        input.focus();
+      });
+  }
+
+  // Click the core arc reactor to trigger voice listening!
+  coreWrap.style.cursor = 'pointer';
+  coreWrap.addEventListener('click', function() {
+    if (recognizer && !thinking) {
+      recognizer.start();
+    } else if (!recognizer) {
+      alert("Voice recognition is not supported or permitted in this browser configuration, sir.");
+    }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  function boot() {
+    setTimeout(function () {
+      // Ensure voices are pre-loaded
+      if ('speechSynthesis' in window) window.speechSynthesis.getVoices();
+      
+      subtitle.textContent = 'SYSTEMS NOMINAL';
+      input.disabled = false;
+      sendBtn.disabled = false;
+      var greeting = timeGreeting() + ' J.A.R.V.I.S. online and at your service.';
+      addMessage('jarvis', greeting);
+      speak(greeting);
+      history.push({ role: 'assistant', content: greeting });
+      input.focus();
+    }, 1100);
+  }
+
+  boot();
+})();
+</script>
